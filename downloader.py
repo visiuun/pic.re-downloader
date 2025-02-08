@@ -1,10 +1,24 @@
 import requests
 import os
-import time
+import hashlib
 import concurrent.futures
 
-def download_image(image_url, output_folder, i):
-    """Downloads a single image, handling errors and saving to disk."""
+def calculate_sha256(file_path):
+    """Calculates the SHA256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            while chunk := f.read(4096):  # Read in 4KB chunks
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest()
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        print(f"Error calculating SHA256 for {file_path}: {e}")
+        return None
+
+def download_image(image_url, output_folder, i, existing_hashes):
+    """Downloads a single image, checks for duplicates by content, and saves to disk."""
     try:
         response = requests.get(image_url, stream=True, timeout=10)  # timeout added
         response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
@@ -29,10 +43,23 @@ def download_image(image_url, output_folder, i):
 
         file_path = os.path.join(output_folder, filename)
 
+        # Calculate SHA256 hash of the downloaded content *before* writing to file.
+        hasher = hashlib.sha256()
+        for chunk in response.iter_content(chunk_size=8192):
+            hasher.update(chunk)
+        content_hash = hasher.hexdigest()
+
+        if content_hash in existing_hashes:
+            print(f"Skipping image {i} - duplicate content found.")
+            return False  # Indicate duplicate
+
+        # Write the content to file now that we know it's not a duplicate.
         with open(file_path, 'wb') as out_file:
-            for chunk in response.iter_content(chunk_size=8192): # 8KB chunks
+            for chunk in response.iter_content(chunk_size=8192):
                 out_file.write(chunk)
 
+        # Add the new hash to the set of existing hashes. Important to do this *after* successful write.
+        existing_hashes.add(content_hash)
         print(f"Downloaded image {i} to {file_path}")
         return True  # Indicate success
 
@@ -43,12 +70,12 @@ def download_image(image_url, output_folder, i):
         print(f"An unexpected error occurred while processing image {i}: {e}")
         return False  # Indicate failure
 
-
 def download_picre_varied_images_resume(num_images, max_threads=4):  # Added max_threads argument
     """
     Downloads multiple versions of the image from pic.re/image, resuming
     from the last downloaded image in the 'picre_varied_images' folder within
-    your Documents directory, using multithreading for faster download speeds.
+    your Documents directory, using multithreading for faster download speeds,
+    and avoids downloading duplicate images by checking their content using SHA256 hashes.
 
     Args:
         num_images (int): The number of different image versions to download
@@ -87,9 +114,22 @@ def download_picre_varied_images_resume(num_images, max_threads=4):  # Added max
 
     print(f"Resuming download from image_{start_index}.webp")
 
+    # Calculate SHA256 hashes of existing files *before* starting downloads
+    existing_hashes = set()
+    print("Calculating SHA256 hashes of existing files for duplicate detection...")
+    for filename in os.listdir(output_folder):
+        file_path = os.path.join(output_folder, filename)
+        if os.path.isfile(file_path):  # Only process files
+            hash_value = calculate_sha256(file_path)
+            if hash_value:
+                existing_hashes.add(hash_value)
+    print(f"Found {len(existing_hashes)} existing files.")
+
+
     # Use a thread pool to download images concurrently
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futures = [executor.submit(download_image, image_url, output_folder, i)
+        # Pass existing_hashes to each download_image task
+        futures = [executor.submit(download_image, image_url, output_folder, i, existing_hashes)
                    for i in range(start_index, start_index + num_images)]
 
         # Wait for all downloads to complete (or timeout)
