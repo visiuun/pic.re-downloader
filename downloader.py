@@ -7,7 +7,7 @@ from PIL import Image, ImageFile, ExifTags
 ImageFile.LOAD_TRUNCATED_IMAGES = True  # Handle truncated images
 
 def download_image(image_url, output_folder, i):
-    """Downloads a single image, handling errors and saving to disk with EXIF copyright."""
+    """Downloads a single image, handling errors and saving to disk with EXIF copyright and program name."""
     try:
         response = requests.get(image_url, stream=True, timeout=10)  # timeout added
         response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
@@ -39,7 +39,7 @@ def download_image(image_url, output_folder, i):
         print(f"Downloaded image {i} to {file_path}")
 
 
-        # Add EXIF copyright data
+        # Add EXIF copyright and software data
         try:
             # Open the image using Pillow
             img = Image.open(file_path)
@@ -62,12 +62,16 @@ def download_image(image_url, output_folder, i):
             # Set the copyright tag (33432) to "pic.re"
             exif[exif_tags['Copyright']] = image_url
 
+            # Set the software tag (305) to "Visiuun's pic.re downloader"
+            exif[exif_tags['Software']] = "Visiuun's pic.re downloader"
+
             # Convert the EXIF data back to bytes
             new_exif_bytes = img.getexif().tobytes()
 
-
             # Save the image with the new EXIF data
             img.save(file_path, "webp", exif=new_exif_bytes)
+
+
 
         except Exception as e:
             print(f"Error adding EXIF data to {file_path}: {e}")
