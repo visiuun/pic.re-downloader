@@ -2,9 +2,12 @@ import requests
 import os
 import time
 import concurrent.futures
+from PIL import Image, ImageFile, ExifTags
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True  # Handle truncated images
 
 def download_image(image_url, output_folder, i):
-    """Downloads a single image, handling errors and saving to disk."""
+    """Downloads a single image, handling errors and saving to disk with EXIF copyright."""
     try:
         response = requests.get(image_url, stream=True, timeout=10)  # timeout added
         response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
@@ -34,6 +37,41 @@ def download_image(image_url, output_folder, i):
                 out_file.write(chunk)
 
         print(f"Downloaded image {i} to {file_path}")
+
+
+        # Add EXIF copyright data
+        try:
+            # Open the image using Pillow
+            img = Image.open(file_path)
+
+            # Handle images without existing EXIF data
+            if 'exif' in img.info:
+                exif_data = img.info['exif']
+            else:
+                exif_data = b'EXIF\x00\x00'  # Minimal EXIF header
+
+            # Load existing EXIF data if it exists
+            try:
+                exif = img.getexif()
+            except AttributeError:  # Handle images where getexif() fails
+                exif = {}  # Create an empty dictionary if it fails
+
+            # Create a dictionary to map EXIF tag names to numeric IDs
+            exif_tags = {ExifTags.TAGS[key]: key for key in ExifTags.TAGS}
+
+            # Set the copyright tag (33432) to "pic.re"
+            exif[exif_tags['Copyright']] = image_url
+
+            # Convert the EXIF data back to bytes
+            new_exif_bytes = img.getexif().tobytes()
+
+
+            # Save the image with the new EXIF data
+            img.save(file_path, "webp", exif=new_exif_bytes)
+
+        except Exception as e:
+            print(f"Error adding EXIF data to {file_path}: {e}")
+
         return True  # Indicate success
 
     except requests.exceptions.RequestException as e:
